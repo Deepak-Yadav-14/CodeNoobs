@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" http-equiv="Content-Security-Policy" content="
+        default-src 'self' https://www.gstatic.com https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.css http://localhost:4000 http://127.0.0.1:4000 https://content.googleapis.com/ https://apis.google.com https://www.gstatic.com https://accounts.google.com https://cdn.jsdelivr.net ;
+        script-src 'self' 'unsafe-eval' https://www.gstatic.com https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.css https://apis.google.com https://content.googleapis.com/ https://www.gstatic.com https://accounts.google.com https://cdn.jsdelivr.net;
+        style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.css;
+        img-src 'self' data: https://lh3.googleusercontent.com;
+        connect-src 'self' https://www.googleapis.com https://content.googleapis.com https://apis.google.com https://accounts.google.com https://oauth2.googleapis.com;
+        frame-src 'self' https://accounts.google.com https://content.googleapis.com;
+        worker-src 'self' blob:;
+        " />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Ensure Cross-Origin-Opener-Policy allows popups to keep access to window.opener -->
+  <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin-allow-popups">
+  <title>CodeBuddy</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>
