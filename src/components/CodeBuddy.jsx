@@ -16,6 +16,7 @@ import {
   DISCOVERY_DOC,
   SCOPES,
 } from "../constants/googleConfig";
+import logo from "../assets/CodeNoobs.png";
 
 const CodeBuddy = () => {
   const [tabs, setTabs] = useState([
@@ -1185,13 +1186,8 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
         <div className='flex items-center justify-between'>
           <div className='flex items-center space-x-4'>
             <div className='flex items-center space-x-2'>
-              <div
-                className={`p-2 rounded-lg ${
-                  darkMode
-                    ? "bg-gradient-to-br from-blue-500 to-purple-600"
-                    : "bg-gradient-to-br from-blue-500 to-purple-600"
-                } shadow-lg`}>
-                <FileText className='text-white' size={20} />
+              <div className={`py-1 shadow-blue-300 rounded-full`}>
+                <img src={logo} alt='CodeNoobs Logo' height={60} width={60} />
               </div>
               <div className='flex flex-col'>
                 <h1
@@ -1200,7 +1196,10 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
                       ? "from-white via-gray-200 to-white"
                       : "from-blue-600 to-amber-600"
                   } bg-clip-text text-transparent`}>
-                  CodeBuddy
+                  Code
+                  <span className='bg-gradient-to-r from-blue-300 to-green-400 bg-clip-text text-transparent'>
+                    Noobs
+                  </span>
                 </h1>
                 <span
                   className={`text-xs font-medium ${
