@@ -7,7 +7,9 @@ const OutputConsole = ({
   darkMode,
   width = 33,
   isResizing = false,
+  onSubmitInput,
 }) => {
+  const [inputValue, setInputValue] = React.useState("");
   return (
     <div
       className={`min-w-0 flex flex-col border-l ${
@@ -49,6 +51,34 @@ const OutputConsole = ({
         {output ||
           'Click "Run" to execute your code...\n\n💡 Tips:\n- JavaScript code will run and show output here\n- Use console.log() to display values\n- Errors will be shown with helpful messages\n- Sign in with Google to save files to Drive!'}
       </pre>
+      <div className='px-4 py-2 border-t flex items-center space-x-2'>
+        <input
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          className={`flex-1 px-3 py-2 rounded border ${
+            darkMode
+              ? "bg-gray-700 border-gray-600 text-white"
+              : "bg-white border-gray-300 text-gray-900"
+          }`}
+          placeholder='Type input for input() and press Enter or Send'
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              onSubmitInput?.(inputValue);
+              setInputValue("");
+            }
+          }}
+        />
+        <button
+          onClick={() => {
+            onSubmitInput?.(inputValue);
+            setInputValue("");
+          }}
+          className={`px-3 py-2 rounded ${
+            darkMode ? "bg-blue-600 text-white" : "bg-blue-500 text-white"
+          }`}>
+          Send
+        </button>
+      </div>
     </div>
   );
 };

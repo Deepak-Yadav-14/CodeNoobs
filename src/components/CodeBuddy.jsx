@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import Editor from "@monaco-editor/react";
 import { FileText, Moon, Sun, User } from "lucide-react";
+import { runPython, executeInteractive } from "../wasm/pyodideClient";
+import { runCppLocal } from "../wasm/cppClient";
 import TabToolbar from "./TabToolbar";
 import OutputConsole from "./OutputConsole";
+import InteractiveConsole from "./InteractiveConsole";
 import StatusBar from "./StatusBar";
 import CloudMenu from "./CloudMenu";
 import FilePickerModal from "./FilePickerModal";
@@ -21,15 +24,75 @@ const CodeBuddy = () => {
       name: "welcome.js",
       language: "javascript",
       content:
-        '// Welcome to CodeBuddy! 🚀\n// A beginner-friendly code editor with Monaco-style experience\n// Now with Google Drive integration!\n\nfunction greetUser(name) {\n  console.log(`Hello, ${name}! Welcome to CodeBuddy!`);\n  return `Happy coding, ${name}!`;\n}\n\n// Try running this code\nconst message = greetUser("Developer");\nconsole.log(message);\n\n// Sign in with Google to save to Drive!',
+        '// Welcome to CodeBuddy! 🚀\n// A beginner-friendly code editor with Monaco-style experience\n// Now with C/C++ support and Google Drive integration!\n\nfunction greetUser(name) {\n  console.log(`Hello, ${name}! Welcome to CodeBuddy!`);\n  return `Happy coding, ${name}!`;\n}\n\n// Try running this code\nconst message = greetUser("Developer");\nconsole.log(message);\n\n// Try creating C/C++ files using the + dropdown!\n// Sign in with Google to save to Drive!',
+      saved: true,
+    },
+    {
+      id: 2,
+      name: "input_example.c",
+      language: "c",
+      content: `#include <stdio.h>
+
+int main() {
+    printf("Hello, World from C!\\n");
+    
+    // Variables for user input
+    int num1, num2;
+    
+    printf("Enter first number: ");
+    scanf("%d", &num1);
+    
+    printf("Enter second number: ");
+    scanf("%d", &num2);
+    
+    int sum = num1 + num2;
+    printf("Sum of %d and %d is: %d\\n", num1, num2, sum);
+    
+    return 0;
+}`,
+      saved: true,
+    },
+    {
+      id: 3,
+      name: "input_example.cpp",
+      language: "cpp",
+      content: `#include <iostream>
+#include <string>
+
+using namespace std;
+
+int main() {
+    cout << "Hello, World from C++!" << endl;
+    
+    // Variables for user input
+    string name;
+    int age;
+    
+    cout << "Enter your name: ";
+    cin >> name;
+    
+    cout << "Enter your age: ";
+    cin >> age;
+    
+    cout << "Hello " << name << ", you are " << age << " years old!" << endl;
+    
+    // Basic calculations
+    int num1 = 15;
+    int num2 = 25;
+    cout << "Sum: " << (num1 + num2) << endl;
+    
+    return 0;
+}`,
       saved: true,
     },
   ]);
   const [activeTabId, setActiveTabId] = useState(1);
   const [output, setOutput] = useState("");
+  // Streaming console history for incremental rendering (output/input interleaved)
+  const [consoleHistory, setConsoleHistory] = useState([]);
   const [darkMode, setDarkMode] = useState(true);
   const [showOutput, setShowOutput] = useState(false);
-  const [nextTabId, setNextTabId] = useState(2);
+  const [nextTabId, setNextTabId] = useState(4);
   const [googleUser, setGoogleUser] = useState(null);
   const [isGoogleReady, setIsGoogleReady] = useState(false);
   const [showCloudMenu, setShowCloudMenu] = useState(false);
@@ -40,11 +103,23 @@ const CodeBuddy = () => {
   const [consoleWidth, setConsoleWidth] = useState(33); // percentage
   const [isResizing, setIsResizing] = useState(false);
   const [errors, setErrors] = useState([]);
+
+  // Interactive console state
+  const [isWaitingForInput, setIsWaitingForInput] = useState(false);
+  const [inputPrompt, setInputPrompt] = useState("");
+  const [interactiveRunning, setInteractiveRunning] = useState(false);
+  const interactiveRespondRef = useRef(null);
+
   const fileInputRef = useRef(null);
   const editorRef = useRef(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const theme = darkMode ? "vs-dark" : "vs";
+  // Map our language values to Monaco language identifiers where necessary
+  const monacoLangMap = { c: "c", cpp: "cpp" };
+  const monacoLanguage = activeTab
+    ? monacoLangMap[activeTab.language] || activeTab.language
+    : "javascript";
 
   // Update error markers when errors change
   useEffect(() => {
@@ -234,7 +309,10 @@ const CodeBuddy = () => {
             );
             if (vf.ok) {
               const vdata = await vf.json();
-              if (vdata.mimeType === "application/vnd.google-apps.folder" && !vdata.trashed) {
+              if (
+                vdata.mimeType === "application/vnd.google-apps.folder" &&
+                !vdata.trashed
+              ) {
                 return vdata.id;
               }
             }
@@ -247,7 +325,9 @@ const CodeBuddy = () => {
             "name = 'CodeBuddy' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
           );
           const listUrl = `https://www.googleapis.com/drive/v3/files?pageSize=10&fields=files(id,name)&q=${q}`;
-          const res = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+          const res = await fetch(listUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
           if (res.ok) {
             const d = await res.json();
             if (d.files && d.files.length > 0) {
@@ -258,17 +338,25 @@ const CodeBuddy = () => {
           }
 
           // Create folder
-          const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ name: "CodeBuddy", mimeType: "application/vnd.google-apps.folder" }),
-          });
+          const createRes = await fetch(
+            "https://www.googleapis.com/drive/v3/files",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                name: "CodeBuddy",
+                mimeType: "application/vnd.google-apps.folder",
+              }),
+            }
+          );
           if (!createRes.ok) {
             const txt = await createRes.text();
-            throw new Error(`Failed to create folder: ${createRes.status} ${txt}`);
+            throw new Error(
+              `Failed to create folder: ${createRes.status} ${txt}`
+            );
           }
           const folder = await createRes.json();
           localStorage.setItem(CODEBUDDY_FOLDER_KEY, folder.id);
@@ -281,7 +369,11 @@ const CodeBuddy = () => {
 
       const folderId = await getOrCreateCodeBuddyFolder();
 
-      const metadata = { name: fileName, mimeType: "text/plain", ...(folderId ? { parents: [folderId] } : {}) };
+      const metadata = {
+        name: fileName,
+        mimeType: "text/plain",
+        ...(folderId ? { parents: [folderId] } : {}),
+      };
       const boundary = "-------314159265358979323846";
       const delimiter = `\r\n--${boundary}\r\n`;
       const close_delim = `\r\n--${boundary}--`;
@@ -367,7 +459,9 @@ const CodeBuddy = () => {
           "name = 'CodeBuddy' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         );
         const listFolderUrl = `https://www.googleapis.com/drive/v3/files?pageSize=10&fields=files(id,name)&q=${qf}`;
-        const folderRes = await fetch(listFolderUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        const folderRes = await fetch(listFolderUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
         if (folderRes.ok) {
           const fd = await folderRes.json();
           if (fd.files && fd.files.length > 0) {
@@ -377,14 +471,20 @@ const CodeBuddy = () => {
             } catch (e) {}
           } else {
             // create folder
-            const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ name: "CodeBuddy", mimeType: "application/vnd.google-apps.folder" }),
-            });
+            const createRes = await fetch(
+              "https://www.googleapis.com/drive/v3/files",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  name: "CodeBuddy",
+                  mimeType: "application/vnd.google-apps.folder",
+                }),
+              }
+            );
             if (createRes.ok) {
               const folder = await createRes.json();
               folderId = folder.id;
@@ -397,7 +497,9 @@ const CodeBuddy = () => {
       }
 
       const q = folderId
-        ? encodeURIComponent(`trashed = false and mimeType = 'text/plain' and '${folderId}' in parents`)
+        ? encodeURIComponent(
+            `trashed = false and mimeType = 'text/plain' and '${folderId}' in parents`
+          )
         : encodeURIComponent("trashed = false and mimeType = 'text/plain'");
       const listUrl = `https://www.googleapis.com/drive/v3/files?pageSize=50&fields=files(id,name,mimeType)&q=${q}`;
       const res = await fetch(listUrl, {
@@ -516,12 +618,108 @@ const CodeBuddy = () => {
     }
   };
 
+  // Get default content for different languages
+  const getDefaultContent = (language) => {
+    switch (language) {
+      case "c":
+        return `#include <stdio.h>
+
+int main() {
+    printf("Hello, World from C!\\n");
+    
+    // Variables and basic operations
+    int num1 = 10;
+    int num2 = 20;
+    int sum = num1 + num2;
+    
+    printf("Sum of %d and %d is: %d\\n", num1, num2, sum);
+    
+    return 0;
+}`;
+      case "cpp":
+        return `#include <iostream>
+#include <string>
+
+using namespace std;
+
+int main() {
+    cout << "Hello, World from C++!" << endl;
+    
+    // Variables and basic operations
+    string name = "CodeBuddy";
+    int version = 1;
+    
+    cout << "Welcome to " << name << " v" << version << endl;
+    
+    // Basic input/output example
+    int num1 = 15;
+    int num2 = 25;
+    cout << "Sum: " << (num1 + num2) << endl;
+    
+    return 0;
+}`;
+      case "python":
+        return `# Python example
+print("Hello, World from Python!")
+
+# Variables and basic operations
+name = "CodeBuddy"
+version = 1.0
+
+print(f"Welcome to {name} v{version}")
+
+# Basic calculations
+num1 = 10
+num2 = 20
+result = num1 + num2
+print(f"Sum of {num1} and {num2} is: {result}")`;
+      case "javascript":
+        return `// JavaScript example
+console.log("Hello, World from JavaScript!");
+
+// Variables and basic operations
+const name = "CodeBuddy";
+const version = "1.0";
+
+console.log(\`Welcome to \${name} v\${version}\`);
+
+// Basic calculations
+const num1 = 10;
+const num2 = 20;
+const result = num1 + num2;
+console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
+      default:
+        return "// New file\n// Start coding here...\n\n";
+    }
+  };
+
   const createNewTab = () => {
+    const defaultLang = "javascript";
+    const currentLang =
+      languages.find((l) => l.value === defaultLang) || languages[0];
     const newTab = {
       id: nextTabId,
-      name: `untitled-${nextTabId}.js`,
-      language: "javascript",
-      content: "// New file\n// Start coding here...\n\n",
+      name: `untitled-${nextTabId}${currentLang?.ext || ".js"}`,
+      language: currentLang?.value || "javascript",
+      content: getDefaultContent(currentLang?.value || "javascript"),
+      saved: false,
+    };
+
+    setTabs([...tabs, newTab]);
+    setActiveTabId(nextTabId);
+    setNextTabId(nextTabId + 1);
+  };
+
+  // Create a new tab with a specific language
+  const createNewTabWithLanguage = (language) => {
+    const currentLang = languages.find((l) => l.value === language);
+    if (!currentLang) return;
+
+    const newTab = {
+      id: nextTabId,
+      name: `untitled-${nextTabId}${currentLang.ext}`,
+      language: language,
+      content: getDefaultContent(language),
       saved: false,
     };
 
@@ -534,11 +732,14 @@ const CodeBuddy = () => {
     event.stopPropagation();
 
     if (tabs.length === 1) {
+      const defaultLang = "javascript";
+      const def =
+        languages.find((l) => l.value === defaultLang) || languages[0];
       setTabs([
         {
           id: 1,
-          name: "untitled.js",
-          language: "javascript",
+          name: `untitled${def?.ext || ".js"}`,
+          language: def?.value || "javascript",
           content: "",
           saved: false,
         },
@@ -559,9 +760,35 @@ const CodeBuddy = () => {
 
   const updateTab = (updates) => {
     setTabs(
-      tabs.map((tab) =>
-        tab.id === activeTabId ? { ...tab, ...updates, saved: false } : tab
-      )
+      tabs.map((tab) => {
+        if (tab.id === activeTabId) {
+          const updatedTab = { ...tab, ...updates, saved: false };
+
+          // If language changed and content is default/empty, provide sample code
+          if (updates.language && updates.language !== tab.language) {
+            const isDefaultContent =
+              tab.content === "// New file\n// Start coding here...\n\n" ||
+              tab.content.trim() === "" ||
+              tab.content === getDefaultContent(tab.language);
+
+            if (isDefaultContent) {
+              updatedTab.content = getDefaultContent(updates.language);
+            }
+
+            // Update filename extension if it's still default
+            const currentLang = languages.find(
+              (l) => l.value === updates.language
+            );
+            if (currentLang && tab.name.startsWith("untitled-")) {
+              const baseName = tab.name.split(".")[0];
+              updatedTab.name = `${baseName}${currentLang.ext}`;
+            }
+          }
+
+          return updatedTab;
+        }
+        return tab;
+      })
     );
   };
 
@@ -625,7 +852,7 @@ const CodeBuddy = () => {
 
     return errors;
   };
-  const runCode = () => {
+  const runCode = async () => {
     setShowOutput(true);
     setErrors([]); // Clear previous errors
 
@@ -661,10 +888,178 @@ const CodeBuddy = () => {
       }
     } else if (activeTab.language === "html") {
       setOutput("HTML preview would be shown here in a full implementation.");
+    } else if (activeTab.language === "python") {
+      // Execute Python interactively: stream output and accept inline input
+      setOutput("");
+      setShowOutput(true);
+      setInteractiveRunning(true);
+
+      try {
+        // Clear previous history before starting
+        setConsoleHistory([]);
+        await executeInteractive(activeTab.content, {
+          onOutput: (text) => {
+            // Debug: log chunk to browser console for diagnosis
+            try {
+              console.debug("pyodide chunk:", text);
+            } catch (e) {}
+            // Append streaming output chunk
+            setConsoleHistory((h) => [
+              ...h,
+              { type: "output", value: text, timestamp: Date.now() },
+            ]);
+            setOutput((s) => s + text);
+          },
+          onInput: (prompt, callback) => {
+            // Show prompt in input area and wait; do not append prompt yet to avoid duplicates
+            setInputPrompt(prompt || "");
+            setIsWaitingForInput(true);
+            interactiveRespondRef.current = (val) => {
+              try {
+                // When user responds, append prompt (if missing) and the input value as separate entries
+                setConsoleHistory((h) => {
+                  const last = h.length ? h[h.length - 1] : null;
+                  const entries = [];
+                  if (
+                    !(
+                      last &&
+                      last.type === "output" &&
+                      last.value === (prompt || "")
+                    )
+                  ) {
+                    entries.push({
+                      type: "output",
+                      value: prompt || "",
+                      timestamp: Date.now(),
+                    });
+                  }
+                  entries.push({
+                    type: "input",
+                    value: String(val),
+                    timestamp: Date.now(),
+                  });
+                  return [...h, ...entries];
+                });
+
+                setOutput((s) => s + String(val) + "\n");
+                callback(val);
+              } finally {
+                setIsWaitingForInput(false);
+                setInputPrompt("");
+                interactiveRespondRef.current = null;
+              }
+            };
+          },
+          onError: (err) => {
+            setConsoleHistory((h) => [
+              ...h,
+              {
+                type: "output",
+                value: "\nERROR: " + String(err),
+                timestamp: Date.now(),
+              },
+            ]);
+            setOutput((s) => s + "\nERROR: " + err);
+          },
+          onComplete: () => setInteractiveRunning(false),
+        });
+      } catch (err) {
+        setOutput((s) => s + `\nExecution error: ${String(err)}`);
+        setInteractiveRunning(false);
+      }
+    } else if (activeTab.language === "c" || activeTab.language === "cpp") {
+      // Execute C/C++ code using WASM client with input support
+      setOutput("");
+      setShowOutput(true);
+      setConsoleHistory([]);
+      setInteractiveRunning(true);
+
+      try {
+        await runCppLocal(activeTab.content, activeTab.language, {
+          onOutput: (text) => {
+            setConsoleHistory((h) => [
+              ...h,
+              { type: "output", value: text, timestamp: Date.now() },
+            ]);
+            setOutput((s) => s + text);
+          },
+          onInput: (prompt, callback) => {
+            // Handle input similar to Python
+            setInputPrompt(prompt || "");
+            setIsWaitingForInput(true);
+            interactiveRespondRef.current = (val) => {
+              try {
+                // Add prompt and input to console history
+                setConsoleHistory((h) => {
+                  const last = h.length ? h[h.length - 1] : null;
+                  const entries = [];
+                  if (
+                    !(
+                      last &&
+                      last.type === "output" &&
+                      last.value === (prompt || "")
+                    )
+                  ) {
+                    entries.push({
+                      type: "output",
+                      value: prompt || "",
+                      timestamp: Date.now(),
+                    });
+                  }
+                  entries.push({
+                    type: "input",
+                    value: String(val),
+                    timestamp: Date.now(),
+                  });
+                  return [...h, ...entries];
+                });
+
+                setOutput((s) => s + String(val) + "\n");
+                callback(val);
+              } finally {
+                setIsWaitingForInput(false);
+                setInputPrompt("");
+                interactiveRespondRef.current = null;
+              }
+            };
+          },
+          onError: (err) => {
+            setConsoleHistory((h) => [
+              ...h,
+              {
+                type: "output",
+                value: "\nERROR: " + String(err),
+                timestamp: Date.now(),
+              },
+            ]);
+            setOutput((s) => s + "\nERROR: " + err);
+          },
+          onComplete: () => {
+            setInteractiveRunning(false);
+          },
+        });
+      } catch (err) {
+        setOutput(`Execution error: ${String(err)}`);
+        setInteractiveRunning(false);
+      }
     } else {
+      const langLabel =
+        languages.find((l) => l.value === activeTab.language)?.label ||
+        activeTab.language;
+
       setOutput(
-        `Code execution for ${activeTab.language} is not supported in this demo.\nThis is a beginner-friendly editor - try JavaScript for interactive execution!`
+        `Code execution for ${langLabel} is not supported in this demo.\nThis is a beginner-friendly editor - try JavaScript for interactive execution!`
       );
+    }
+  };
+
+  // Handle input submission for interactive Python console
+  const handleInputSubmit = (input) => {
+    if (inputResolver) {
+      inputResolver(input);
+      setIsWaitingForInput(false);
+      setInputPrompt("");
+      setInputResolver(null);
     }
   };
 
@@ -800,10 +1195,10 @@ const CodeBuddy = () => {
               </div>
               <div className='flex flex-col'>
                 <h1
-                  className={`text-xl font-bold bg-gradient-to-r ${
+                  className={`text-xl font-bold bg-gradient-to-br ${
                     darkMode
-                      ? "from-blue-400 to-purple-400"
-                      : "from-blue-600 to-purple-600"
+                      ? "from-white via-gray-200 to-white"
+                      : "from-blue-600 to-amber-600"
                   } bg-clip-text text-transparent`}>
                   CodeBuddy
                 </h1>
@@ -946,7 +1341,7 @@ const CodeBuddy = () => {
             {activeTab ? (
               <Editor
                 height='100%'
-                language={activeTab.language}
+                language={monacoLanguage}
                 value={activeTab.content}
                 onChange={(value) => updateTab({ content: value })}
                 theme={theme}
@@ -1008,14 +1403,38 @@ const CodeBuddy = () => {
               onMouseDown={handleMouseDown}
             />
 
-            <OutputConsole
-              output={output}
-              setOutput={setOutput}
-              setShowOutput={setShowOutput}
-              darkMode={darkMode}
-              width={consoleWidth}
-              isResizing={isResizing}
-            />
+            {activeTab &&
+            (activeTab.language === "python" ||
+              activeTab.language === "c" ||
+              activeTab.language === "cpp") ? (
+              <InteractiveConsole
+                output={output}
+                setOutput={setOutput}
+                setShowOutput={setShowOutput}
+                darkMode={darkMode}
+                width={consoleWidth}
+                isResizing={isResizing}
+                onInput={(value) => {
+                  // When user submits input from UI, forward to the responder
+                  if (interactiveRespondRef.current) {
+                    interactiveRespondRef.current(value);
+                  }
+                }}
+                isWaitingForInput={isWaitingForInput}
+                inputPrompt={inputPrompt}
+                history={consoleHistory}
+                setHistory={setConsoleHistory}
+              />
+            ) : (
+              <OutputConsole
+                output={output}
+                setOutput={setOutput}
+                setShowOutput={setShowOutput}
+                darkMode={darkMode}
+                width={consoleWidth}
+                isResizing={isResizing}
+              />
+            )}
           </>
         )}
       </div>
