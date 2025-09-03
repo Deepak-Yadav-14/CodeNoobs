@@ -2,10 +2,11 @@ import React, { useState, useRef, useEffect } from "react";
 import Editor from "@monaco-editor/react";
 import { FileText, Moon, Sun, User } from "lucide-react";
 import { runPython, executeInteractive } from "../wasm/pyodideClient";
-import { runCppLocal } from "../wasm/cppClient";
+import { runCpp, runCppWithInput, runCppDirect } from "../wasm/cppClient";
 import TabToolbar from "./TabToolbar";
 import OutputConsole from "./OutputConsole";
 import InteractiveConsole from "./InteractiveConsole";
+import SplitConsole from "./SplitConsole";
 import StatusBar from "./StatusBar";
 import CloudMenu from "./CloudMenu";
 import FilePickerModal from "./FilePickerModal";
@@ -111,6 +112,11 @@ int main() {
   const [interactiveRunning, setInteractiveRunning] = useState(false);
   const interactiveRespondRef = useRef(null);
 
+  // Execution state management
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionAbortController, setExecutionAbortController] =
+    useState(null);
+
   const fileInputRef = useRef(null);
   const editorRef = useRef(null);
 
@@ -144,39 +150,94 @@ int main() {
 
   // Google Drive Initialization (using new Google Identity Services)
   useEffect(() => {
+    const initGoogleAPIs = () => {
+      console.log("Checking Google APIs availability...");
+      
+      // Check if both APIs are loaded
+      if (!window.gapi) {
+        console.log("GAPI not loaded yet, retrying in 500ms...");
+        setTimeout(initGoogleAPIs, 500);
+        return;
+      }
+      
+      if (!window.google?.accounts?.oauth2) {
+        console.log("Google Identity Services not loaded yet, retrying in 500ms...");
+        setTimeout(initGoogleAPIs, 500);
+        return;
+      }
+      
+      console.log("Google APIs are available, initializing client...");
+      window.gapi.load("client", initClient);
+    };
+
     // Load Google API client
     const scriptGapi = document.createElement("script");
     scriptGapi.src = "https://apis.google.com/js/api.js";
     scriptGapi.async = true;
     scriptGapi.defer = true;
+    
     // Load Google Identity Services
     const scriptGis = document.createElement("script");
     scriptGis.src = "https://accounts.google.com/gsi/client";
     scriptGis.async = true;
     scriptGis.defer = true;
+    
     scriptGapi.onload = () => {
-      window.gapi.load("client", initClient);
+      console.log("GAPI script loaded");
+      initGoogleAPIs();
     };
-    document.body.append(scriptGis, scriptGapi);
+    
+    scriptGis.onload = () => {
+      console.log("Google Identity Services script loaded");
+    };
+    
+    // Only add scripts if they don't already exist
+    if (!document.querySelector('script[src="https://apis.google.com/js/api.js"]')) {
+      document.body.appendChild(scriptGapi);
+    }
+    if (!document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      document.body.appendChild(scriptGis);
+    }
+    
+    // If scripts are already loaded, start initialization
+    if (window.gapi && window.google?.accounts?.oauth2) {
+      initGoogleAPIs();
+    }
+    
     return () => {
-      document.body.removeChild(scriptGis);
-      document.body.removeChild(scriptGapi);
+      // Clean up only if we added the scripts
+      try {
+        if (document.body.contains(scriptGis)) {
+          document.body.removeChild(scriptGis);
+        }
+        if (document.body.contains(scriptGapi)) {
+          document.body.removeChild(scriptGapi);
+        }
+      } catch (e) {
+        console.log("Script cleanup error (non-critical):", e);
+      }
     };
   }, []);
 
   // Initialize Google API client and OAuth token client
   const initClient = async () => {
     try {
+      console.log("Initializing GAPI client...");
       await window.gapi.client.init({
         apiKey: GOOGLE_API_KEY,
         discoveryDocs: [DISCOVERY_DOC],
       });
+      console.log("GAPI client initialized successfully");
+      
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: SCOPES,
+        ux_mode: "popup",
         callback: (tokenResponse) => {
           if (tokenResponse.error) {
             console.error("Token error:", tokenResponse);
+            setOutput("❌ Authentication failed. Please try again.");
+            setShowOutput(true);
             return;
           }
           // Set token for gapi client
@@ -223,35 +284,72 @@ int main() {
         }
       } catch (e) {
         // ignore JSON parse / storage errors
+        console.log("Storage error (non-critical):", e);
       }
+      
+      console.log("Google authentication ready!");
     } catch (err) {
       console.error("Error initializing GAPI client:", err);
+      setOutput("❌ Failed to initialize Google authentication. Check your API configuration.");
+      setShowOutput(true);
+      setIsGoogleReady(false);
     }
   };
 
   // Fetch Google user profile
   const fetchUserInfo = async () => {
     try {
+      console.log("Fetching user info...");
       const response = await window.gapi.client.request({
         path: "https://www.googleapis.com/oauth2/v3/userinfo",
       });
+      
       const profile = response.result;
+      console.log("Google profile data:", profile); // Debug log
+      
+      // Ensure the picture URL is properly formatted
+      let pictureUrl = profile.picture;
+      if (pictureUrl && !pictureUrl.includes('=s96-c')) {
+        // Add size parameter for better quality
+        pictureUrl = pictureUrl.includes('?') 
+          ? `${pictureUrl}&sz=96` 
+          : `${pictureUrl}?sz=96`;
+      }
+      
       setGoogleUser({
         name: profile.name,
         email: profile.email,
-        picture: profile.picture,
+        picture: pictureUrl,
       });
       setOutput("✅ Google sign-in successful!");
       setShowOutput(true);
     } catch (err) {
       console.error("Failed to fetch user info:", err);
+      setOutput("❌ Failed to fetch user profile information.");
+      setShowOutput(true);
     }
   };
 
   // Sign in (request access token)
   const signInWithGoogle = () => {
-    if (!tokenClient) return;
-    tokenClient.requestAccessToken({ prompt: "consent" });
+    console.log("Sign in attempt - tokenClient:", !!tokenClient, "isGoogleReady:", isGoogleReady);
+    
+    if (!tokenClient || !isGoogleReady) {
+      setOutput("❌ Google authentication not ready. Please refresh the page and wait a moment.");
+      setShowOutput(true);
+      return;
+    }
+
+    try {
+      console.log("Requesting access token...");
+      tokenClient.requestAccessToken({
+        prompt: "consent",
+      });
+    } catch (error) {
+      console.error("Sign-in error:", error);
+      setOutput("❌ Sign-in failed. Please try again.");
+      setShowOutput(true);
+    }
   };
 
   // Sign out (revoke token)
@@ -969,80 +1067,18 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
         setInteractiveRunning(false);
       }
     } else if (activeTab.language === "c" || activeTab.language === "cpp") {
-      // Execute C/C++ code using WASM client with input support
+      // For C/C++ programs, show a message to use the split console
       setOutput("");
       setShowOutput(true);
-      setConsoleHistory([]);
-      setInteractiveRunning(true);
-
-      try {
-        await runCppLocal(activeTab.content, activeTab.language, {
-          onOutput: (text) => {
-            setConsoleHistory((h) => [
-              ...h,
-              { type: "output", value: text, timestamp: Date.now() },
-            ]);
-            setOutput((s) => s + text);
-          },
-          onInput: (prompt, callback) => {
-            // Handle input similar to Python
-            setInputPrompt(prompt || "");
-            setIsWaitingForInput(true);
-            interactiveRespondRef.current = (val) => {
-              try {
-                // Add prompt and input to console history
-                setConsoleHistory((h) => {
-                  const last = h.length ? h[h.length - 1] : null;
-                  const entries = [];
-                  if (
-                    !(
-                      last &&
-                      last.type === "output" &&
-                      last.value === (prompt || "")
-                    )
-                  ) {
-                    entries.push({
-                      type: "output",
-                      value: prompt || "",
-                      timestamp: Date.now(),
-                    });
-                  }
-                  entries.push({
-                    type: "input",
-                    value: String(val),
-                    timestamp: Date.now(),
-                  });
-                  return [...h, ...entries];
-                });
-
-                setOutput((s) => s + String(val) + "\n");
-                callback(val);
-              } finally {
-                setIsWaitingForInput(false);
-                setInputPrompt("");
-                interactiveRespondRef.current = null;
-              }
-            };
-          },
-          onError: (err) => {
-            setConsoleHistory((h) => [
-              ...h,
-              {
-                type: "output",
-                value: "\nERROR: " + String(err),
-                timestamp: Date.now(),
-              },
-            ]);
-            setOutput((s) => s + "\nERROR: " + err);
-          },
-          onComplete: () => {
-            setInteractiveRunning(false);
-          },
-        });
-      } catch (err) {
-        setOutput(`Execution error: ${String(err)}`);
-        setInteractiveRunning(false);
-      }
+      setOutput(
+        `🚀 C/C++ Execution Available!\n\n` +
+          `💡 For C/C++ programs, use the dedicated console on the right:\n` +
+          `📝 1. Enter any input values in the "Program Input" section\n` +
+          `▶️  2. Click the "Run" button in the console\n` +
+          `📊 3. View output in the "Program Output" section\n\n` +
+          `✨ This prevents execution conflicts and provides better input handling!\n\n` +
+          `🔧 Your code will be compiled with GCC 14.1.0 via Judge0 API.`
+      );
     } else {
       const langLabel =
         languages.find((l) => l.value === activeTab.language)?.label ||
@@ -1052,6 +1088,66 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
         `Code execution for ${langLabel} is not supported in this demo.\nThis is a beginner-friendly editor - try JavaScript for interactive execution!`
       );
     }
+  };
+
+  // New execution function for split console with input
+  const executeWithInput = async (inputValue) => {
+    if (!activeTab || isExecuting) return;
+
+    // Prevent multiple executions
+    if (isExecuting) {
+      setOutput(
+        (prev) => prev + "\n⚠️ Execution already in progress. Please wait...\n"
+      );
+      return;
+    }
+
+    setIsExecuting(true);
+    setOutput("");
+    setShowOutput(true);
+    setErrors([]);
+
+    try {
+      // Create abort controller for potential cancellation
+      const controller = new AbortController();
+      setExecutionAbortController(controller);
+
+      if (activeTab.language === "c" || activeTab.language === "cpp") {
+        await runCppDirect(activeTab.content, activeTab.language, inputValue, {
+          onOutput: (text) => {
+            setOutput((prev) => prev + text);
+          },
+          onError: (err) => {
+            setOutput((prev) => prev + "\n❌ ERROR: " + String(err) + "\n");
+          },
+          onComplete: () => {
+            setIsExecuting(false);
+            setExecutionAbortController(null);
+          },
+        });
+      } else {
+        setOutput(
+          "❌ Split console is only available for C/C++ programs.\nUse the regular Run button for other languages."
+        );
+        setIsExecuting(false);
+        setExecutionAbortController(null);
+      }
+    } catch (error) {
+      setOutput((prev) => prev + `\n❌ Execution error: ${error.message}\n`);
+      setIsExecuting(false);
+      setExecutionAbortController(null);
+    }
+  };
+
+  // Stop execution function
+  const stopExecution = () => {
+    if (executionAbortController) {
+      executionAbortController.abort();
+      setExecutionAbortController(null);
+    }
+    setIsExecuting(false);
+    setInteractiveRunning(false);
+    setOutput((prev) => prev + "\n🛑 Execution stopped by user.\n");
   };
 
   // Handle input submission for interactive Python console
@@ -1232,11 +1328,24 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
               {googleUser ? (
                 <div className='flex items-center space-x-2'>
                   <div className='flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-800 rounded-lg'>
-                    <img
-                      src={googleUser.picture}
-                      alt={googleUser.name}
-                      className='w-6 h-6 rounded-full'
-                    />
+                    {googleUser.picture ? (
+                      <img
+                        src={googleUser.picture}
+                        alt={googleUser.name}
+                        className='w-6 h-6 rounded-full'
+                        onError={(e) => {
+                          console.error("Profile picture failed to load:", googleUser.picture);
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div 
+                      className='w-6 h-6 rounded-full bg-green-600 text-white flex items-center justify-center text-xs font-bold'
+                      style={{ display: googleUser.picture ? 'none' : 'flex' }}
+                    >
+                      {googleUser.name ? googleUser.name.charAt(0).toUpperCase() : 'U'}
+                    </div>
                     <span className='text-sm font-medium'>
                       {googleUser.name}
                     </span>
@@ -1402,10 +1511,7 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
               onMouseDown={handleMouseDown}
             />
 
-            {activeTab &&
-            (activeTab.language === "python" ||
-              activeTab.language === "c" ||
-              activeTab.language === "cpp") ? (
+            {activeTab && activeTab.language === "python" ? (
               <InteractiveConsole
                 output={output}
                 setOutput={setOutput}
@@ -1423,6 +1529,18 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
                 inputPrompt={inputPrompt}
                 history={consoleHistory}
                 setHistory={setConsoleHistory}
+              />
+            ) : activeTab &&
+              (activeTab.language === "c" || activeTab.language === "cpp") ? (
+              <SplitConsole
+                output={output}
+                setOutput={setOutput}
+                darkMode={darkMode}
+                width={consoleWidth}
+                isResizing={isResizing}
+                onExecuteWithInput={executeWithInput}
+                isExecuting={isExecuting}
+                language={activeTab.language}
               />
             ) : (
               <OutputConsole

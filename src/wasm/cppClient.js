@@ -1,22 +1,300 @@
 // C/C++ WebAssembly client using remote compilation
 // This uses a remote API service since full C++ WASM compilation in browser is complex
 
+import { RAPIDAPI_KEY, JUDGE0_API_URL } from "../constants/googleConfig";
+
 let isInitialized = false;
+
+// Test Judge0 API connection
+export const testJudge0Connection = async () => {
+  try {
+    if (!RAPIDAPI_KEY || RAPIDAPI_KEY === "YOUR_RAPIDAPI_KEY_HERE") {
+      throw new Error(
+        "RapidAPI key not configured. Please update your RAPIDAPI_KEY in googleConfig.js"
+      );
+    }
+
+    // Test with a simple request to get available languages
+    const response = await fetch(`${JUDGE0_API_URL}/languages`, {
+      method: "GET",
+      headers: {
+        "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `API connection failed: ${response.status} - ${errorText}`
+      );
+    }
+
+    const languages = await response.json();
+    console.log(
+      "Judge0 API connection successful!",
+      languages.length + " languages available"
+    );
+    return true;
+  } catch (error) {
+    console.error("Judge0 API connection test failed:", error);
+    throw error;
+  }
+};
 
 export const initializeCpp = async () => {
   if (isInitialized) return;
 
   try {
-    // C/C++ compilation in browser is complex, so we'll use a fallback approach
-    // You could integrate with services like:
-    // - Judge0 API
-    // - Sphere Engine
-    // - Or set up your own backend
+    // Test the API connection first
+    await testJudge0Connection();
+
     isInitialized = true;
-    console.log("C/C++ client initialized");
+    console.log("C/C++ client initialized with Judge0 API");
   } catch (error) {
     console.error("Failed to initialize C/C++ client:", error);
     throw error;
+  }
+};
+
+// Simple C/C++ execution for split console (with direct input)
+export const runCppDirect = async (
+  code,
+  language,
+  stdin = "",
+  callbacks = {}
+) => {
+  const { onOutput, onError, onComplete } = callbacks;
+
+  try {
+    await initializeCpp();
+
+    if (onOutput) {
+      onOutput(`🔧 Compiling ${language.toUpperCase()} code...\n`);
+      if (stdin && stdin.trim()) {
+        onOutput(`📥 Using input: ${stdin.replace(/\n/g, " ")}\n`);
+      }
+    }
+
+    // Execute directly with Judge0
+    await executeWithJudge0(code, language, stdin.trim(), callbacks);
+  } catch (error) {
+    const errorMsg = `❌ Execution error: ${error.message}`;
+    if (onError) onError(errorMsg);
+    else if (onOutput) onOutput(errorMsg);
+    if (onComplete) onComplete();
+  }
+};
+
+// Enhanced C/C++ execution using Judge0 API with input handling
+export const runCppWithInput = async (code, language, callbacks = {}) => {
+  const { onOutput, onError, onComplete } = callbacks;
+
+  try {
+    await initializeCpp();
+
+    // Check if code needs input
+    const needsInput =
+      (language === "c" &&
+        (code.includes("scanf") ||
+          code.includes("getchar") ||
+          code.includes("gets"))) ||
+      (language === "cpp" &&
+        (code.includes("cin") || code.includes("getline")));
+
+    if (!needsInput) {
+      // No input needed, use regular execution
+      return await runCpp(code, language, callbacks);
+    }
+
+    // For input-requiring programs, ask for input in a user-friendly way
+    if (onOutput) {
+      onOutput("📝 This program requires input.\n");
+      onOutput(
+        "💡 Tip: Enter all input values separated by spaces or new lines.\n"
+      );
+      onOutput("🚀 Example: For two numbers, enter: 10 20\n");
+      onOutput(
+        "📋 After entering input, the program will execute automatically.\n\n"
+      );
+    }
+
+    return new Promise((resolve) => {
+      const { onInput } = callbacks;
+      if (onInput) {
+        onInput("Enter input values: ", async (inputString) => {
+          const cleanInput = inputString.trim();
+          if (cleanInput) {
+            await executeWithJudge0(code, language, cleanInput, callbacks);
+          } else {
+            if (onOutput)
+              onOutput("⚠️  No input provided. Executing without input...\n");
+            await executeWithJudge0(code, language, "", callbacks);
+          }
+          resolve();
+        });
+      } else {
+        // No input handler available, execute without input
+        executeWithJudge0(code, language, "", callbacks).then(resolve);
+      }
+    });
+  } catch (error) {
+    const errorMsg = `❌ Execution error: ${error.message}`;
+    if (onError) onError(errorMsg);
+    else if (onOutput) onOutput(errorMsg);
+    if (onComplete) onComplete();
+  }
+};
+
+// Helper function to execute with Judge0
+const executeWithJudge0 = async (code, language, stdin, callbacks) => {
+  const { onOutput, onError, onComplete } = callbacks;
+
+  try {
+    // Judge0 language IDs (using latest GCC versions)
+    // C (GCC 14.1.0) = 103, C++ (GCC 14.1.0) = 105
+    // Fallback: C (GCC 9.2.0) = 50, C++ (GCC 9.2.0) = 54
+    const languageId = language === "c" ? 103 : 105;
+
+    if (onOutput) {
+      onOutput(
+        `🔧 Compiling ${language.toUpperCase()} code (Language ID: ${languageId})...\n`
+      );
+      if (stdin) {
+        onOutput(`📥 Input provided: ${stdin.replace(/\n/g, " ")}\n`);
+      }
+    }
+
+    const submissionData = {
+      language_id: languageId,
+      source_code: code,
+      stdin: stdin,
+    };
+
+    console.log("Submission payload:", submissionData);
+
+    const submitResponse = await fetch(
+      `${JUDGE0_API_URL}/submissions?base64_encoded=false&wait=false`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
+          "X-RapidAPI-Key": RAPIDAPI_KEY,
+        },
+        body: JSON.stringify(submissionData),
+      }
+    );
+
+    if (!submitResponse.ok) {
+      const errorText = await submitResponse.text();
+      console.error("Submission error:", {
+        status: submitResponse.status,
+        statusText: submitResponse.statusText,
+        error: errorText,
+        payload: submissionData,
+      });
+      throw new Error(
+        `Submission failed: ${submitResponse.status} - ${errorText}`
+      );
+    }
+
+    const submitData = await submitResponse.json();
+    const token = submitData.token;
+
+    if (onOutput) onOutput("⏳ Running program...\n\n");
+
+    // Poll for results
+    let attempts = 0;
+    const maxAttempts = 30;
+
+    while (attempts < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const resultResponse = await fetch(
+        `${JUDGE0_API_URL}/submissions/${token}?base64_encoded=false`,
+        {
+          method: "GET",
+          headers: {
+            "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
+          },
+        }
+      );
+
+      if (!resultResponse.ok) {
+        const errorText = await resultResponse.text();
+        console.error("Result fetch error:", resultResponse.status, errorText);
+        throw new Error(
+          `Result fetch failed: ${resultResponse.status} - ${errorText}`
+        );
+      }
+
+      const resultData = await resultResponse.json();
+
+      if (resultData.status.id <= 2) {
+        attempts++;
+        continue;
+      }
+
+      // Process completed
+      let output = "";
+      let hasError = false;
+
+      // Handle compilation errors
+      if (resultData.compile_output && resultData.compile_output.trim()) {
+        output +=
+          "🔴 Compilation Errors:\n" + resultData.compile_output + "\n\n";
+        hasError = true;
+      }
+
+      // Handle runtime errors
+      if (resultData.stderr && resultData.stderr.trim()) {
+        output += "⚠️  Runtime Errors:\n" + resultData.stderr + "\n\n";
+        hasError = true;
+      }
+
+      // Handle successful output
+      if (resultData.stdout && resultData.stdout.trim()) {
+        output += "✅ Program Output:\n" + resultData.stdout + "\n";
+      } else if (!hasError) {
+        output += "✅ Program executed successfully (no output)\n";
+      }
+
+      // Add execution status info
+      const statusNames = {
+        3: "Accepted",
+        4: "Wrong Answer",
+        5: "Time Limit Exceeded",
+        6: "Compilation Error",
+        7: "Runtime Error (SIGSEGV)",
+        8: "Runtime Error (SIGXFSZ)",
+        9: "Runtime Error (SIGFPE)",
+        10: "Runtime Error (SIGABRT)",
+        11: "Runtime Error (NZEC)",
+        12: "Runtime Error (Other)",
+        13: "Internal Error",
+        14: "Exec Format Error",
+      };
+
+      const statusName =
+        statusNames[resultData.status.id] || `Status ${resultData.status.id}`;
+      if (resultData.status.id !== 3) {
+        // Not "Accepted"
+        output += `\n📊 Execution Status: ${statusName}\n`;
+      }
+
+      if (onOutput) onOutput(output);
+      if (onComplete) onComplete();
+      return;
+    }
+
+    throw new Error("⏰ Execution timeout - program took too long to complete");
+  } catch (error) {
+    const errorMsg = `❌ ${error.message}`;
+    if (onError) onError(errorMsg);
+    else if (onOutput) onOutput(errorMsg);
+    if (onComplete) onComplete();
   }
 };
 
@@ -27,20 +305,20 @@ export const runCpp = async (code, language, callbacks = {}) => {
   try {
     await initializeCpp();
 
-    // Judge0 language IDs: C = 50, C++ = 54
-    const languageId = language === "c" ? 50 : 54;
+    // Judge0 language IDs: C (GCC 14.1.0) = 103, C++ (GCC 14.1.0) = 105
+    const languageId = language === "c" ? 103 : 105;
 
-    if (onOutput) onOutput("Compiling and running...\n");
+    if (onOutput) onOutput("🔧 Compiling and running...\n");
 
     // Create submission
     const submitResponse = await fetch(
-      "https://judge0-ce.p.rapidapi.com/submissions",
+      `${JUDGE0_API_URL}/submissions?base64_encoded=false&wait=false`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
-          "X-RapidAPI-Key": "YOUR_RAPIDAPI_KEY", // You'll need to get this
+          "X-RapidAPI-Key": RAPIDAPI_KEY,
         },
         body: JSON.stringify({
           language_id: languageId,
@@ -51,7 +329,11 @@ export const runCpp = async (code, language, callbacks = {}) => {
     );
 
     if (!submitResponse.ok) {
-      throw new Error(`Submission failed: ${submitResponse.status}`);
+      const errorText = await submitResponse.text();
+      console.error("Submission error:", submitResponse.status, errorText);
+      throw new Error(
+        `Submission failed: ${submitResponse.status} - ${errorText}`
+      );
     }
 
     const submitData = await submitResponse.json();
@@ -65,18 +347,22 @@ export const runCpp = async (code, language, callbacks = {}) => {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
 
       const resultResponse = await fetch(
-        `https://judge0-ce.p.rapidapi.com/submissions/${token}`,
+        `${JUDGE0_API_URL}/submissions/${token}?base64_encoded=false`,
         {
           method: "GET",
           headers: {
             "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
-            "X-RapidAPI-Key": "YOUR_RAPIDAPI_KEY",
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
           },
         }
       );
 
       if (!resultResponse.ok) {
-        throw new Error(`Result fetch failed: ${resultResponse.status}`);
+        const errorText = await resultResponse.text();
+        console.error("Result fetch error:", resultResponse.status, errorText);
+        throw new Error(
+          `Result fetch failed: ${resultResponse.status} - ${errorText}`
+        );
       }
 
       const resultData = await resultResponse.json();
@@ -89,21 +375,26 @@ export const runCpp = async (code, language, callbacks = {}) => {
 
       // Process completed
       let output = "";
+      let hasError = false;
 
-      if (resultData.stdout) {
-        output += resultData.stdout;
+      // Handle compilation errors
+      if (resultData.compile_output && resultData.compile_output.trim()) {
+        output +=
+          "🔴 Compilation Errors:\n" + resultData.compile_output + "\n\n";
+        hasError = true;
       }
 
-      if (resultData.stderr) {
-        output += resultData.stderr;
+      // Handle runtime errors
+      if (resultData.stderr && resultData.stderr.trim()) {
+        output += "⚠️  Runtime Errors:\n" + resultData.stderr + "\n\n";
+        hasError = true;
       }
 
-      if (resultData.compile_output) {
-        output += `Compile output:\n${resultData.compile_output}\n`;
-      }
-
-      if (!output.trim()) {
-        output = "Program executed successfully (no output)";
+      // Handle successful output
+      if (resultData.stdout && resultData.stdout.trim()) {
+        output += "✅ Program Output:\n" + resultData.stdout + "\n";
+      } else if (!hasError) {
+        output += "✅ Program executed successfully (no output)\n";
       }
 
       if (onOutput) onOutput(output);
