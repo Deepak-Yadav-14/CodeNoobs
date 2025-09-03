@@ -152,20 +152,22 @@ int main() {
   useEffect(() => {
     const initGoogleAPIs = () => {
       console.log("Checking Google APIs availability...");
-      
+
       // Check if both APIs are loaded
       if (!window.gapi) {
         console.log("GAPI not loaded yet, retrying in 500ms...");
         setTimeout(initGoogleAPIs, 500);
         return;
       }
-      
+
       if (!window.google?.accounts?.oauth2) {
-        console.log("Google Identity Services not loaded yet, retrying in 500ms...");
+        console.log(
+          "Google Identity Services not loaded yet, retrying in 500ms..."
+        );
         setTimeout(initGoogleAPIs, 500);
         return;
       }
-      
+
       console.log("Google APIs are available, initializing client...");
       window.gapi.load("client", initClient);
     };
@@ -175,35 +177,41 @@ int main() {
     scriptGapi.src = "https://apis.google.com/js/api.js";
     scriptGapi.async = true;
     scriptGapi.defer = true;
-    
+
     // Load Google Identity Services
     const scriptGis = document.createElement("script");
     scriptGis.src = "https://accounts.google.com/gsi/client";
     scriptGis.async = true;
     scriptGis.defer = true;
-    
+
     scriptGapi.onload = () => {
       console.log("GAPI script loaded");
       initGoogleAPIs();
     };
-    
+
     scriptGis.onload = () => {
       console.log("Google Identity Services script loaded");
     };
-    
+
     // Only add scripts if they don't already exist
-    if (!document.querySelector('script[src="https://apis.google.com/js/api.js"]')) {
+    if (
+      !document.querySelector('script[src="https://apis.google.com/js/api.js"]')
+    ) {
       document.body.appendChild(scriptGapi);
     }
-    if (!document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+    if (
+      !document.querySelector(
+        'script[src="https://accounts.google.com/gsi/client"]'
+      )
+    ) {
       document.body.appendChild(scriptGis);
     }
-    
+
     // If scripts are already loaded, start initialization
     if (window.gapi && window.google?.accounts?.oauth2) {
       initGoogleAPIs();
     }
-    
+
     return () => {
       // Clean up only if we added the scripts
       try {
@@ -228,7 +236,7 @@ int main() {
         discoveryDocs: [DISCOVERY_DOC],
       });
       console.log("GAPI client initialized successfully");
-      
+
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: SCOPES,
@@ -286,11 +294,13 @@ int main() {
         // ignore JSON parse / storage errors
         console.log("Storage error (non-critical):", e);
       }
-      
+
       console.log("Google authentication ready!");
     } catch (err) {
       console.error("Error initializing GAPI client:", err);
-      setOutput("❌ Failed to initialize Google authentication. Check your API configuration.");
+      setOutput(
+        "❌ Failed to initialize Google authentication. Check your API configuration."
+      );
       setShowOutput(true);
       setIsGoogleReady(false);
     }
@@ -303,19 +313,19 @@ int main() {
       const response = await window.gapi.client.request({
         path: "https://www.googleapis.com/oauth2/v3/userinfo",
       });
-      
+
       const profile = response.result;
       console.log("Google profile data:", profile); // Debug log
-      
+
       // Ensure the picture URL is properly formatted
       let pictureUrl = profile.picture;
-      if (pictureUrl && !pictureUrl.includes('=s96-c')) {
+      if (pictureUrl && !pictureUrl.includes("=s96-c")) {
         // Add size parameter for better quality
-        pictureUrl = pictureUrl.includes('?') 
-          ? `${pictureUrl}&sz=96` 
+        pictureUrl = pictureUrl.includes("?")
+          ? `${pictureUrl}&sz=96`
           : `${pictureUrl}?sz=96`;
       }
-      
+
       setGoogleUser({
         name: profile.name,
         email: profile.email,
@@ -332,10 +342,17 @@ int main() {
 
   // Sign in (request access token)
   const signInWithGoogle = () => {
-    console.log("Sign in attempt - tokenClient:", !!tokenClient, "isGoogleReady:", isGoogleReady);
-    
+    console.log(
+      "Sign in attempt - tokenClient:",
+      !!tokenClient,
+      "isGoogleReady:",
+      isGoogleReady
+    );
+
     if (!tokenClient || !isGoogleReady) {
-      setOutput("❌ Google authentication not ready. Please refresh the page and wait a moment.");
+      setOutput(
+        "❌ Google authentication not ready. Please refresh the page and wait a moment."
+      );
       setShowOutput(true);
       return;
     }
@@ -1334,17 +1351,21 @@ console.log(\`Sum of \${num1} and \${num2} is: \${result}\`);`;
                         alt={googleUser.name}
                         className='w-6 h-6 rounded-full'
                         onError={(e) => {
-                          console.error("Profile picture failed to load:", googleUser.picture);
-                          e.target.style.display = 'none';
-                          e.target.nextSibling.style.display = 'flex';
+                          console.error(
+                            "Profile picture failed to load:",
+                            googleUser.picture
+                          );
+                          e.target.style.display = "none";
+                          e.target.nextSibling.style.display = "flex";
                         }}
                       />
                     ) : null}
-                    <div 
+                    <div
                       className='w-6 h-6 rounded-full bg-green-600 text-white flex items-center justify-center text-xs font-bold'
-                      style={{ display: googleUser.picture ? 'none' : 'flex' }}
-                    >
-                      {googleUser.name ? googleUser.name.charAt(0).toUpperCase() : 'U'}
+                      style={{ display: googleUser.picture ? "none" : "flex" }}>
+                      {googleUser.name
+                        ? googleUser.name.charAt(0).toUpperCase()
+                        : "U"}
                     </div>
                     <span className='text-sm font-medium'>
                       {googleUser.name}
