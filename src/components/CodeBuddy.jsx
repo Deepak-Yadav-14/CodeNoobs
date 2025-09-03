@@ -26,7 +26,7 @@ const CodeBuddy = () => {
       name: "welcome.js",
       language: "javascript",
       content:
-        '// Welcome to CodeBuddy! 🚀\n// A beginner-friendly code editor with Monaco-style experience\n// Now with C/C++ support and Google Drive integration!\n\nfunction greetUser(name) {\n  console.log(`Hello, ${name}! Welcome to CodeBuddy!`);\n  return `Happy coding, ${name}!`;\n}\n\n// Try running this code\nconst message = greetUser("Developer");\nconsole.log(message);\n\n// Try creating C/C++ files using the + dropdown!\n// Sign in with Google to save to Drive!',
+        '// Welcome to CodeNoobs! 🚀\n// A beginner-friendly code editor with Monaco-style experience\n// Now with C/C++ support and Google Drive integration!\n\nfunction greetUser(name) {\n  console.log(`Hello, ${name}! Welcome to CodeNoobs!`);\n  return `Happy coding, ${name}!`;\n}\n\n// Try running this code\nconst message = greetUser("Developer");\nconsole.log(message);\n\n// Try creating C/C++ files using the + dropdown!\n// Sign in with Google to save to Drive!',
       saved: true,
     },
     {
@@ -409,14 +409,14 @@ int main() {
         : `${activeTab.name}${currentLang.ext}`;
 
       // Use multipart upload via REST to reliably send content
-      // Ensure files are stored inside a dedicated CodeBuddy folder
-      const CODEBUDDY_FOLDER_KEY = "codebuddy_folder_id";
+      // Ensure files are stored inside a dedicated CodeNoobs folder
+      const CODENOOBS_FOLDER_KEY = "codenoobs_folder_id";
 
       const getOrCreateCodeBuddyFolder = async () => {
         if (!accessToken) return null;
         try {
           // Check cached folder id
-          const cached = localStorage.getItem(CODEBUDDY_FOLDER_KEY);
+          const cached = localStorage.getItem(CODENOOBS_FOLDER_KEY);
           if (cached) {
             // verify it exists and is a folder
             const vf = await fetch(
@@ -433,12 +433,12 @@ int main() {
               }
             }
             // invalid cached id -> remove
-            localStorage.removeItem(CODEBUDDY_FOLDER_KEY);
+            localStorage.removeItem(CODENOOBS_FOLDER_KEY);
           }
 
           // Try to find existing folder named 'CodeBuddy'
           const q = encodeURIComponent(
-            "name = 'CodeBuddy' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            "name = 'CodeNoobs' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
           );
           const listUrl = `https://www.googleapis.com/drive/v3/files?pageSize=10&fields=files(id,name)&q=${q}`;
           const res = await fetch(listUrl, {
@@ -448,7 +448,7 @@ int main() {
             const d = await res.json();
             if (d.files && d.files.length > 0) {
               const id = d.files[0].id;
-              localStorage.setItem(CODEBUDDY_FOLDER_KEY, id);
+              localStorage.setItem(CODENOOBS_FOLDER_KEY, id);
               return id;
             }
           }
@@ -463,7 +463,7 @@ int main() {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                name: "CodeBuddy",
+                name: "CodeNoobs",
                 mimeType: "application/vnd.google-apps.folder",
               }),
             }
@@ -475,10 +475,10 @@ int main() {
             );
           }
           const folder = await createRes.json();
-          localStorage.setItem(CODEBUDDY_FOLDER_KEY, folder.id);
+          localStorage.setItem(CODENOOBS_FOLDER_KEY, folder.id);
           return folder.id;
         } catch (err) {
-          console.error("Error getting/creating CodeBuddy folder:", err);
+          console.error("Error getting/creating CodeNoobs folder:", err);
           return null;
         }
       };
@@ -558,11 +558,11 @@ int main() {
         return;
       }
 
-      // List only files inside the CodeBuddy folder (create the folder if needed)
-      const CODEBUDDY_FOLDER_KEY = "codebuddy_folder_id";
+      // List only files inside the CodeNoobs folder (create the folder if needed)
+      const CODENOOBS_FOLDER_KEY = "codenoobs_folder_id";
       const getCachedFolder = () => {
         try {
-          return localStorage.getItem(CODEBUDDY_FOLDER_KEY);
+          return localStorage.getItem(CODENOOBS_FOLDER_KEY);
         } catch (e) {
           return null;
         }
@@ -572,7 +572,7 @@ int main() {
       if (!folderId) {
         // attempt to find or create folder via the same logic used on save
         const qf = encodeURIComponent(
-          "name = 'CodeBuddy' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+          "name = 'CodeNoobs' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         );
         const listFolderUrl = `https://www.googleapis.com/drive/v3/files?pageSize=10&fields=files(id,name)&q=${qf}`;
         const folderRes = await fetch(listFolderUrl, {
@@ -583,7 +583,7 @@ int main() {
           if (fd.files && fd.files.length > 0) {
             folderId = fd.files[0].id;
             try {
-              localStorage.setItem(CODEBUDDY_FOLDER_KEY, folderId);
+              localStorage.setItem(CODENOOBS_FOLDER_KEY, folderId);
             } catch (e) {}
           } else {
             // create folder
@@ -596,7 +596,7 @@ int main() {
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  name: "CodeBuddy",
+                  name: "CodeNoobs",
                   mimeType: "application/vnd.google-apps.folder",
                 }),
               }
@@ -605,7 +605,7 @@ int main() {
               const folder = await createRes.json();
               folderId = folder.id;
               try {
-                localStorage.setItem(CODEBUDDY_FOLDER_KEY, folderId);
+                localStorage.setItem(CODENOOBS_FOLDER_KEY, folderId);
               } catch (e) {}
             }
           }
@@ -762,7 +762,7 @@ int main() {
     cout << "Hello, World from C++!" << endl;
     
     // Variables and basic operations
-    string name = "CodeBuddy";
+  string name = "CodeNoobs";
     int version = 1;
     
     cout << "Welcome to " << name << " v" << version << endl;
@@ -779,7 +779,7 @@ int main() {
 print("Hello, World from Python!")
 
 # Variables and basic operations
-name = "CodeBuddy"
+name = "CodeNoobs"
 version = 1.0
 
 print(f"Welcome to {name} v{version}")
@@ -794,7 +794,7 @@ print(f"Sum of {num1} and {num2} is: {result}")`;
 console.log("Hello, World from JavaScript!");
 
 // Variables and basic operations
-const name = "CodeBuddy";
+const name = "CodeNoobs";
 const version = "1.0";
 
 console.log(\`Welcome to \${name} v\${version}\`);
