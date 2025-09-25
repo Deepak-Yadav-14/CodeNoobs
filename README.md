@@ -4,6 +4,8 @@
 
 **CodeBuddy** is a powerful, beginner-friendly web-based code editor built with modern technologies. It provides a VS Code-like experience directly in your browser with support for multiple programming languages, real-time code execution, and cloud integration.
 
+### [Live Demo](https://codenoobs.vercel.app)
+
 ## ✨ Features
 
 ### 🎯 **Multi-Language Support**
